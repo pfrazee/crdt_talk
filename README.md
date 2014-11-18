@@ -68,20 +68,24 @@ operational transforms
 
 OT example:
 given a string "abc", two operations at two nodes
-  O1: insert "x" at position 0
-  O2: delete char at position 2 ("c")
+  A: insert "x" at position 0
+  B: delete char at position 2 ("c")
 
-if O2, then O1: you get "xab"
-if O1, then O2: you get "xac"
+if del(2), then ins(x,0): you get "xab"
+if ins(x,0), then del(2): you get "xac"
 
 -
 
 to maintain intent, 
-  if O1, then O2,
-  O2 must be transformed
+  if ins(x,0) is executed before del(2)
+  del(2) must be transformed
 
-O2 = delete(2)
-O2' = delete(3)
+  del(2)     -> del(3)
+  delete 'b' -> delete 'c'
+
+"xabc"...
+  del(2), ins(x,0) = "xab"
+  ins(x,0), del(3) = "xab"
 
 -
 
@@ -255,11 +259,13 @@ the growset CRDT
   join(1,t) = t
   join(0,t) = t
 
-  two ops: apply, unapply
+  two ops: apply, rollback
   apply(0)   = 1
   apply(1)   = 1
-  unapply(1) = t
-  unapply(0) = t
+  apply(t)   = t
+  rollback(0) = t
+  rollback(1) = t
+  rollback(t) = t
 
 -
 
@@ -302,6 +308,10 @@ the observed-remove set CRDT
 
 -
 
+ok, what about ordered values?
+
+-
+
 the 2P2P-graph CRDT
   a graph of vertices connected by edges
   implemented as two 2P sets
@@ -312,10 +322,18 @@ the 2P2P-graph CRDT
 
 -
 
-add-only monotonic DAGs
+how about a directed-acyclic graph?
+
+bad news:
   global invariants are difficult
   maintaining a shape (eg DAG or tree) usually requires sync
 
+so we'll need some constraints
+
+-
+
+add-only monotonic DAGs
+  
   only works if 1) edges cant be removed
   and 2) you only strengthen existing edges
 
@@ -323,11 +341,20 @@ add-only monotonic DAGs
   BAD: {(1,2), (2,3)} + (3,1)
   BAD: {(1,2), (2,3)} + (3,4) <-- can you guess why?
 
+  (note to self: use whiteboard)
+
 -
 
-add-remove partial-order CRDT
-  a DAG with transitive edges (partial order)
-  therefore can handle removes
+how is that useful?
+
+-
+
+add-remove partial-order set CRDT
+
+think of as a DAG...
+  ...partial order means edges are transitive
+  ...transitive means the gaps will "self-heal"
+  ...which means removes are ok!
 
   vertices: 2P-set of values
   edges: Growset of {prev, value, next}
@@ -336,9 +363,239 @@ add-remove partial-order CRDT
 
 we're almost ready to replace OT!
 
-we just need a total order
-  how? tag elements in the partial-order CRDT...
-  with `timestamp ++ node-id`
+-
+
+what's missing?
+
+total order!
+
+  it's
+  "hello world"
+  not
+  " edhllloorw"
+
+-
+
+how do we get total order?
+
+one solution:
+  tag elements in the partial-order set CRDT...
+  ...with `timestamp ++ node-id`
+
+  a(9am) < b(10am) < b(11am) < c(9am)
 
   concurrent adds now have decideable order!
+
+-
+
+in your face, OT
+
+-
+
+what other CRDTs are there?
+
+-
+
+registers
+
+  not very fun: you use a clock...
+  ...and say "last writer wins"
+
+  bob   sets X to "foo" at 5pm
+  alice sets X to "bar" at 6pm
+  sync...
+  X = "bar"
+
+-
+
+maps
+
+  kind of like sets + registers...
+
+  each element in the set is a tuple
+  {key, value}
+
+  if you have two valid values for a given key...
+  last-writer wins
+
+-
+
+counters
+
+  a vector of counters...
+  ...one counter for each node
+  ...current value = sum of them
+
+-
+
+counters that can decrement
+
+  two vectors of counters...
+  ...the "inc" vector and the "dec" vector
+  ...one counter in each vector for each node
+  ...current value = sum of incs - sum of decs
+
+-
+
+starting to get a feel for it?
+
+-
+
+let's talk overhead
+
+-
+
+so far, we've been shipping state
+  and the state can get fat
+
+  think of the OR-Set
+  ...all those tombstones!
+
+-
+
+alternative: state-delta shipping
+
+  rather than ship the whole state...
+  ...ship state deltas which also merge
+
+  and ship the whole state occasionally too
+
+-
+
+delta-shipping a state-based counter
+
+  delta's only ship the node's own dimension in the vector
+
+               a,b,c,d 
+  full state: [5,6,5,2]
+  delta:       b=6
+  delta:       b=7
+  delta:       b=8
+  delta:       b=9
+  full state: [5,9,5,2]
+
+-
+
+alternative: operation-based CRDTS
+
+  rather than ship state, ship the ops
+  requirement: guaranteed once-only delivery
+
+-
+
+ops-shipping an OR-Set
+
+  rather than ship entire element & tombstone set...
+  ...ship add(element, tag) and remove(tags)
+
+-
+
+ops-shipping is pretty low-overhead...
+...but we still have a lot of tombstones accumulating
+
+what if we didn't have to track them?
+
+-
+
+if you have ops-shipping, that means you have guaranteed delivery
+
+if you also have causal ordering...
+...then you dont have to track tombstones
+
+-
+
+causal ordering?
+  an operation that depends on a previous operation...
+  ...will arrive after its dependency
+
+  eg removes show up after adds
+
+how?
+  if you guarantee message-order from a node
+  and nodes rebroadcast ops they depend on
+  then you get causal order
+
+-
+
+e.g. in an OR set
+  add(tag123, 'a')
+  remove(tag123)
+  ^ just remove 'tag123' from the elements
+
+  remove(tag123)
+  add(tag123, 'a')
+  ^ cant happen
+  why? we have causal ordering
+  the 'add' would have been rebroadcast by the node that did the 'remove'
+
+-
+
+great! getting pretty efficient
+
+what if we want total order?
+
+-
+
+oh shit
+
+-
+
+the totally-order list relied on tombstones
+  remember the transitive "partial-order" edges?
+  we need the tombstones to "transit"
+
+-
+
+ok, so let's say we:
+
+  keep doing ops-shipping
+  keep doing causal ordering
+
+  and create a totally-ordered ID-space which is infinitely divisible?
+
+  therefore removing the need for tombstones to keep track of order
+
+-
+
+logoot
+
+  ordered set
+  no tombstones
+
+  based on non-mutable and totally ordered position IDs
+  which are in a continuous space
+  meaning, for two ids A and B...
+  ...we can always find an id C which is between them (A < C < B)
+
+-
+
+how?
+
+  a list of integers
+
+  if...
+  A = 0
+  B = 1
   
+  then...
+  C = 0,1
+
+  and we say...
+  0 < {0,1} < 1
+
+-
+
+to avoid conflicts,
+use node IDs during generation
+
+-
+
+totally ordered
+no tombstones
+ships operations
+
+now that's webscale
+
+-
+
+questions?
