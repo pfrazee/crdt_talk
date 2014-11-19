@@ -1,7 +1,7 @@
 var fs = require('fs')
 var NLINES = 20
 
-var notes = fs.readFileSync('./README.md', {encoding:'utf-8'})
+var notes = fs.readFileSync('./README.txt', {encoding:'utf-8'})
 notes = notes.split('\n-\n\n')
 
 var index = 0
@@ -11,7 +11,7 @@ function print() {
   var start = (NLINES/2 - nlines/2)|0
   for (var i=0; i < NLINES; i++) {
     if (i >= start && i < start + nlines)
-      console.log(para[i-start])
+      console.log(' '+para[i-start])
     else
       console.log('')
   }

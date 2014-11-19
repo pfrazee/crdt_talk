@@ -479,7 +479,25 @@ delta-shipping a state-based counter
 alternative: operation-based CRDTS
 
   rather than ship state, ship the ops
-  requirement: guaranteed once-only delivery
+  requirement: guaranteed causal delivery
+
+-
+
+In op-based CRDTs, representations of operations issued at each
+node are reliably broadcast to all replicas. Once all replicas
+receive all issued operations (on all nodes), they eventually
+converge to a single state, if:
+
+  (a) operations are broadcast via a reliable causal broadcast, and
+  (b) 'applying' representations of concurrently issued operations
+      is commutative.
+
+-
+
+Op-based CRDTs can often have a simple and compact state since
+they can rely on the exactly-once delivery properties of the
+broadcast service, and thus do not have to explicitly handle
+non-idempotent operations.
 
 -
 
@@ -488,19 +506,17 @@ ops-shipping an OR-Set
   rather than ship entire element & tombstone set...
   ...ship add(element, tag) and remove(tags)
 
--
+  commutative:
+    add+add = add+add
+    rem+rem = rem+rem
+  not commutaive:
+    add+rem != rem+add
 
-ops-shipping is pretty low-overhead...
-...but we still have a lot of tombstones accumulating
+  but...
+    because of causal ordering,
+    this can still work
 
-what if we didn't have to track them?
-
--
-
-if you have ops-shipping, that means you have guaranteed delivery
-
-if you also have causal ordering...
-...then you dont have to track tombstones
+    in fact, it lets us ditch the tombstone set!
 
 -
 
@@ -510,14 +526,31 @@ causal ordering?
 
   eg removes show up after adds
 
-how?
+how? one way:
   if you guarantee message-order from a node
   and nodes rebroadcast ops they depend on
   then you get causal order
 
 -
 
-e.g. in an OR set
+how? another way:
+  "Tagged Reliable Causal Broadcast"
+
+  use partial-order: the "happens-before" relation
+  if a "happens-before" dep is not yet met, buffer until it is
+
+-
+
+Unlike totally ordered broadcast, which requires a global consensus
+on the delivery order, causal broadcast can progress with local decisions.
+For general datatypes, causal consistency is likely the strongest
+consistency criteria compatible with an always-available system that
+eventually converges
+
+-
+
+now we dont need tombstones!
+
   add(tag123, 'a')
   remove(tag123)
   ^ just remove 'tag123' from the elements
@@ -526,7 +559,8 @@ e.g. in an OR set
   add(tag123, 'a')
   ^ cant happen
   why? we have causal ordering
-  the 'add' would have been rebroadcast by the node that did the 'remove'
+  the 'add' would have been rebroadcast by the node that did
+    the 'remove'
 
 -
 
