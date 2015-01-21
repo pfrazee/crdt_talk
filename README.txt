@@ -46,23 +46,17 @@ this talk: a survey of strategies for EC
 
 -
 
-first: read repair
-read repair is a syncing strategy
-before or after read, a digest is sent to other nodes
-detects stale entries in nodes which triggers updates
+convergence
 
--
-
-now: convergence!
-two nodes make concurrent changes
-how do we reconcile them?
+  two nodes make concurrent changes
+  how do we reconcile them?
 
 -
 
 operational transforms
-1. apply operations locally
-2. replicate the operations to all other nodes
-3. transform received operations to maintain intent
+  1. apply operations locally
+  2. replicate the operations to all other nodes
+  3. transform received operations to maintain intent
 
 -
 
@@ -167,25 +161,33 @@ a monotonic data type
 
 join-semilattice
   a partially ordered set
-  has a join operation, "least upper bound"
+  has a join operation called LUB
+
+  "least upper bound"
   
-  LUB(x,y) =
+  LUB( x, y ) =
   - the least element of the semilattice
   - which is >= both x and y
 
 -
 
 example
-given this set of partially ordered tuples:
-  {0,0} < {1,0} | {0,1} < {1,1}
+given A,B,C,D, where:
 
-  join({0,0}, {1,0}) = {1,0}
-  join({0,0}, {0,1}) = {0,1}
-  join({1,0}, {0,1}) = {1,1}
+  A < B 
+  A < C
+  B < D
+  C < D
 
-"least element":
-  {1,1} > {0,1} > {0,0}, but...
-  join({0,0}, {0,1}) != {1,1}
+    B
+   / \
+  A   D
+   \ /
+    C
+
+  LUB( A, B ) = B
+  LUB( A, C ) = C
+  LUB( B, C ) = D
 
 -
 
@@ -229,43 +231,43 @@ lets look at some CRDTs
 
 -
 
-idempotence is a CRDT
+idempotence is monotoic
   two states: 0 < 1
-  join(0,0) = 0
-  join(0,1) = 1
-  join(1,1) = 1
+  LUB( 0, 0 ) = 0
+  LUB( 0, 1 ) = 1
+  LUB( 1, 1 ) = 1
 
   one op: apply
-  apply(0) = 1
-  apply(1) = 1
+  apply( 0 ) = 1
+  apply( 1 ) = 1
 
 -
 
 the growset CRDT
   a set where state only grows
-  join(S1, S2) = union(S1, S2)
-  join({a,b}, {c}) = {a,b,c}
-  join({a,b,c}, {c}) = {a,b,c}
+  LUB( S1, S2 )       = union( S1, S2 )
+  LUB( [a,b], [c] )   = [a,b,c]
+  LUB( [a,b,c], [c] ) = [a,b,c]
 
   one op: add
-  add({a,b}, c) = {a,b,c}
-  add({a,b,c}, c) = {a,b,c}
+  add( [a,b], c ) = [a,b,c]
+  add( [a,b,c], c ) = [a,b,c]
 
 -
 
-"reversable" is a CRDT
+"reversable" is monotonic
   three states: 0 < 1 < t
-  join(0,1) = 1
-  join(1,t) = t
-  join(0,t) = t
+  LUB( 0, 1 ) = 1
+  LUB( 1, t ) = t
+  LUB( 0, t ) = t
 
   two ops: apply, rollback
-  apply(0)   = 1
-  apply(1)   = 1
-  apply(t)   = t
-  rollback(0) = t
-  rollback(1) = t
-  rollback(t) = t
+  apply( 0 )    = 1
+  apply( 1 )    = 1
+  apply( t )    = t
+  rollback( 0 ) = t
+  rollback( 1 ) = t
+  rollback( t ) = t
 
 -
 
@@ -274,14 +276,14 @@ the 2P-set CRDT
   ...but never re-added
   uses two growsets: elements and tombstones
 
-  join(S1, S2) = [
-    join(S1.elements,   S2.elements),
-    join(S1.tombstones, S2.tombstones)
+  LUB( S1, S2 ) = [
+    LUB( S1.elements,   S2.elements ),
+    LUB( S1.tombstones, S2.tombstones )
   ]
 
   two ops: add, remove
-  add(S, x)    = add(S.elements, x)
-  remove(S, x) = add(S.tombstones, x)
+     add( S, x ) = add( S.elements,   x )
+  remove( S, x ) = add( S.tombstones, x )
 
   value = S.elements - S.tombstones
 
@@ -295,149 +297,87 @@ the observed-remove set CRDT
   a set where elements can freely add and remove
   each element is tagged with a unique id
 
-  join(S1, S2) = [
-    join(S1.element-tags,   S2.element-tags),
-    join(S1.tombstone-tags, S2.tombstone-tags)
+  LUB(S1, S2) = [
+    LUB( S1.element-tags,   S2.element-tags ),
+    LUB( S1.tombstone-tags, S2.tombstone-tags )
   ]
 
   two ops: add, remove
-  add(S, x)    = add(S.element-tags, x ++ gen_tag())
-  remove(S, x) = join(S.tombstone-tags, find(S.element-tags, x))
+  add( S, x )    = add( S.element-tags,   x ++ gen_tag() )
+  remove( S, x ) = add( S.tombstone-tags, findTagsOf( x ) )
 
   value = unique(S.element-tags - S.tombstone-tags)
 
 -
 
-ok, what about ordered values?
+what else is there?
 
 -
 
-the 2P2P-graph CRDT
-  a graph of vertices connected by edges
-  implemented as two 2P sets
+register CRDT
 
-  invariant: edges must have corresponding vertices
-  what if there's concurrent addEdge & removeVertex?
-    removeVertex wins
+  "last writer wins (LWW)"
 
--
+  not very fun
+    you use a clock
+    (eg lamport clock)
+    and take the last write
 
-how about a directed-acyclic graph?
-
-bad news:
-  global invariants are difficult
-  maintaining a shape (eg DAG or tree) usually requires sync
-
-so we'll need some constraints
-
--
-
-add-only monotonic DAGs
-  
-  only works if 1) edges cant be removed
-  and 2) you only strengthen existing edges
-
-  OK:  {(1,2), (2,3)} + (1,3)
-  BAD: {(1,2), (2,3)} + (3,1)
-  BAD: {(1,2), (2,3)} + (3,4) <-- can you guess why?
-
-  (note to self: use whiteboard)
-
--
-
-how is that useful?
-
--
-
-add-remove partial-order set CRDT
-
-think of as a DAG...
-  ...partial order means edges are transitive
-  ...transitive means the gaps will "self-heal"
-  ...which means removes are ok!
-
-  vertices: 2P-set of values
-  edges: Growset of {prev, value, next}
-
--
-
-we're almost ready to replace OT!
-
--
-
-what's missing?
-
-total order!
-
-  it's
-  "hello world"
-  not
-  " edhllloorw"
-
--
-
-how do we get total order?
-
-one solution:
-  tag elements in the partial-order set CRDT...
-  ...with `timestamp ++ node-id`
-
-  a(9am) < b(10am) < b(11am) < c(9am)
-
-  concurrent adds now have decideable order!
-
--
-
-in your face, OT
-
--
-
-what other CRDTs are there?
-
--
-
-registers
-
-  not very fun: you use a clock...
-  ...and say "last writer wins"
-
-  bob   sets X to "foo" at 5pm
-  alice sets X to "bar" at 6pm
+  bob   sets X to "foo" at seq:5
+  alice sets X to "bar" at seq:6
   sync...
   X = "bar"
 
 -
 
-maps
+register CRDT
+
+  "multi value (MV)"
+
+  use a vector clock
+  when neither vector-stamp dominates
+    use both values
+
+  bob   sets X to "foo" at [5,6]
+  alice sets X to "bar" at [6,5]
+  sync...
+  x = "foo" & "bar"
+
+  (couch db)
+
+-
+
+map CRDT
 
   kind of like sets + registers...
 
   each element in the set is a tuple
-  {key, value}
+  (key, value)
 
-  if you have two valid values for a given key...
-  last-writer wins
+  if you have two valid values for a given key, either do
 
--
-
-counters
-
-  a vector of counters...
-  ...one counter for each node
-  ...current value = sum of them
+   - last-writer wins, or
+   - multivalue
 
 -
 
-counters that can decrement
+counter CRDT
 
-  two vectors of counters...
-  ...the "inc" vector and the "dec" vector
-  ...one counter in each vector for each node
-  ...current value = sum of incs - sum of decs
+  lots of options, here's one:
+
+  a set of counters
+    one for each node
+
+  value() = sum( set )
 
 -
 
-starting to get a feel for it?
+counter CRDT w/decrementing
+
+  two counter CRDTs
+    "inc" counter and "dec" counter
+
+  value() = value( inc ) - value( dec )
 
 -
 
@@ -462,7 +402,7 @@ alternative: state-delta shipping
 
 -
 
-delta-shipping a state-based counter
+example: delta-shipping a counter
 
   delta's only ship the node's own dimension in the vector
 
@@ -476,7 +416,13 @@ delta-shipping a state-based counter
 
 -
 
-alternative: operation-based CRDTS
+so that's state-based
+
+what else is there?
+
+-
+
+operation-based CRDTS
 
   rather than ship state, ship the ops
   requirement: guaranteed causal delivery
@@ -501,82 +447,107 @@ non-idempotent operations.
 
 -
 
-ops-shipping an OR-Set
+example of exactly-once: append-only logs
 
-  rather than ship entire element & tombstone set...
-  ...ship add(element, tag) and remove(tags)
+-
+
+an op-based counter
+
+  every node emits "inc" and "dec"
+  and receiving nodes just... do it
+  
+  because we have exactly-once delivery
+  this is safe
+  a inc or dec will never get double-counted
+
+-
+
+an op-based OR set
+
+  rather than ship entire element & tombstone set
+    we ship add(element, tag) and remove(tags)
 
   commutative:
-    add+add = add+add
-    rem+rem = rem+rem
-  not commutaive:
-    add+rem != rem+add
 
-  but...
-    because of causal ordering,
-    this can still work
+    add( x )+add( y ) = add( y )+add( x )
+    rem( x )+rem( y ) = rem( x )+rem( y )
+    rem( x )+rem( x ) = rem( x )
+    add( x )+rem( x ) = noop()    
+    rem( x )+add( x ) = noop()    
+    add( x )+add( x ) = --cant happen--
 
-    in fact, it lets us ditch the tombstone set!
-
--
-
-causal ordering?
-  an operation that depends on a previous operation...
-  ...will arrive after its dependency
-
-  eg removes show up after adds
-
-how? one way:
-  if you guarantee message-order from a node
-  and nodes rebroadcast ops they depend on
-  then you get causal order
+    (remember, x and y are actually globally-unique tags)
 
 -
 
-how? another way:
+exactly once guarantees idempotence
+
+but op-based requires "guaranteed causal delivery"
+
+
+what's that about?
+
+-
+
+causal ordering
+
+  guarantees:
+    an operation always arrives
+    after any operations it causally depends on
+
+  eg:
+    removes show up after adds
+
+-
+
+causal ordering
+
+  is weaker than total ordering
+
+  but achievable in an EC system
+
+-
+
+how is it done?
+
+senders responsibility
+
+  if the wire guarantees order
+  just make sure you emit dependencies first
+
+-
+
+how is it done?
+
+receivers responsibility
+
   "Tagged Reliable Causal Broadcast"
 
-  use partial-order: the "happens-before" relation
-  if a "happens-before" dep is not yet met, buffer until it is
+  each message has a unique tag
+  each message lists its dependency's tags
+
+  on receive, if dependencies are not met
+    the message is buffered locally
 
 -
 
-Unlike totally ordered broadcast, which requires a global consensus
-on the delivery order, causal broadcast can progress with local decisions.
-For general datatypes, causal consistency is likely the strongest
-consistency criteria compatible with an always-available system that
-eventually converges
+now we can reduce our tombstone-set significantly
 
--
+  add(tagA, 'a') // tagA added to elements
+  remove(tagA)   // tagA removed from elements
 
-now we dont need tombstones!
+  remove(tagB)   // tagA added to tombstones
+  add(tagB, 'a') // tagA removed from tombstones
 
-  add(tag123, 'a')
-  remove(tag123)
-  ^ just remove 'tag123' from the elements
-
-  remove(tag123)
-  add(tag123, 'a')
-  ^ cant happen
-  why? we have causal ordering
-  the 'add' would have been rebroadcast by the node that did
-    the 'remove'
+  add(tagC, 'a') // tagC added to elements
+  remove(tagC)   // tagC removed from elements
+  remove(tagC)   // tagC added to tombstones (edge-case accumulation)
 
 -
 
 great! getting pretty efficient
 
 what if we want total order?
-
--
-
-oh shit
-
--
-
-the totally-order list relied on tombstones
-  remember the transitive "partial-order" edges?
-  we need the tombstones to "transit"
 
 -
 
@@ -587,48 +558,80 @@ ok, so let's say we:
 
   and create a totally-ordered ID-space which is infinitely divisible?
 
-  therefore removing the need for tombstones to keep track of order
-
 -
 
-logoot
+logoot: an ordered list
 
-  ordered set
-  no tombstones
+  uses totally-ordered positions
+    in a continuous space
 
-  based on non-mutable and totally ordered position IDs
-  which are in a continuous space
-  meaning, for two ids A and B...
-  ...we can always find an id C which is between them (A < C < B)
+  meaning...
+    
+    for two positions, A and B,
+      we can always find a C,
+      which is between them 
+
+      A < C < B
 
 -
 
 how?
 
-  a list of integers
+  lists of integers
 
-  if...
-  A = 0
-  B = 1
+  if
+    A = 0
+    B = 1
   
-  then...
-  C = 0,1
-
-  and we say...
-  0 < {0,1} < 1
+  then we choose
+    C = 0.5
 
 -
 
-to avoid conflicts,
-use node IDs during generation
+and we just keep doing that
+
+  between( 0.5, 1 ) = 0.5.5
+
+  0.5 < 0.5.5 < 0.6
+  0.6 < 0.6.5 < 0.7
+
+  0       < 0.5
+  0.5     < 0.5.5
+  0.5.5   < 0.5.5.5
+  0.5.5.5 < 0.6
 
 -
 
-totally ordered
-no tombstones
-ships operations
+there are infinite implicit zeroes
 
-now that's webscale
+  0.5 == 0.5.0.0.0.0.0.0.0.0.0.....
+
+-
+
+so
+
+  0.5 < 0.5.0.0.0.0.0.0.0.0.1
+
+-
+
+how to insert?
+
+insertBetween( A, B, value ):
+  1. generate a position between A and B
+  2. append the node id to avoid conflicts
+  3. write value to list at that generated position
+
+-
+
+now you have total order
+
+-
+
+and that's all for CRDTs
+
+-
+
+(for now)
 
 -
 
