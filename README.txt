@@ -1,4 +1,8 @@
-Eventual consistency
+CRDTs 2 part 2
+
+-
+
+(of n)
 
 -
 
@@ -8,8 +12,8 @@ nodes are not able to sync in real time
 
 -
 
-to give good performance, nodes act on their own...
-then reconcile state with each other
+nodes act on their own
+then reconcile state afterwards
 
 this is called "eventual consistency"
 
@@ -24,112 +28,44 @@ if so, you need...
 -
 
 "convergence"
-nodes must come to the same state
-regardless of the order they receive information
+
+  nodes must come to the same state
+  regardless of the order they receive information
 
 -
 
-example: git
-
--
-
-example: twitter
-"manhattan db"
-
--
-
-example: google docs
-
--
-
-this talk: a survey of strategies for EC
-
--
-
-convergence
+so
 
   two nodes make concurrent changes
   how do we reconcile them?
 
 -
 
-operational transforms
-  1. apply operations locally
-  2. replicate the operations to all other nodes
-  3. transform received operations to maintain intent
+what if...
+
+  we made data structures
+  that could NEVER CONFLICT
 
 -
 
-OT example:
-given a string "abc", two operations at two nodes
-  A: insert "x" at position 0
-  B: delete char at position 2 ("c")
+like idempotence
 
-if del(2), then ins(x,0): you get "xab"
-if ins(x,0), then del(2): you get "xac"
+  idemptotent values cant have conflicting changes
+  because you can only change them once
+  and, if it's already changed, it stays changed
 
--
-
-to maintain intent, 
-  if ins(x,0) is executed before del(2)
-  del(2) must be transformed
-
-  del(2)     -> del(3)
-  delete 'b' -> delete 'c'
-
-"xabc"...
-  del(2), ins(x,0) = "xab"
-  ins(x,0), del(3) = "xab"
+  that's why we like them
 
 -
 
-lots of different OT algorithms
-all track the partial order of ops
-sequential ops apply as-received
-concurrent ops must be transformed
+so can we get more stuff like idempotence?
 
 -
 
-OT common semantics
-documents: ordered list of characters
-3 operations: insert, update, delete
-
-or you can define your own
+yep: CRDTs
 
 -
 
-While the classic OT approach of defining operations through their
- offsets in the text seems to be simple and natural, real-world
- distributed systems raise serious issues. Namely, that operations
- propagate with finite speed, states of participants are often different,
- thus the resulting combinations of states and operations are extremely
- hard to foresee and understand.
-
--
-
-Joseph Gentle, an ex Google Wave engineer and an author of the Share.JS
- library, wrote: Unfortunately, implementing OT sucks. There's a million
- algorithms with different tradeoffs, mostly trapped in academic papers.
- The algorithms are really hard and time consuming to implement correctly.
- ... Wave took 2 years to write and if we rewrote it today, it would take 
- almost as long to write a second time.
-
--
-
-The correctness problems of OT led to introduction of transformationless 
- post-OT schemes, such as WOOT, Logoot and Causal Trees (CT).
-"Post-OT" schemes decompose the document into atomic operations, but they 
- workaround the need to transform operations by employing a combination of
- unique symbol identifiers, vector timestamps and/or tombstones.
-
--
-
-rather than try to preserve intent of ops
-use data semantics which cant conflict
-
--
-
-but how?
 let's explore some properties
 
 -
@@ -150,11 +86,12 @@ example graphs
 -
 
 a monotonic data type
+  
   type's values are ordered
-  operations preserve order
-  f(Obj) >= Obj
+  all of the type's methods are monotonic
 
   - an int where `++` is the only op
+  - an idempotent value (aka a bool where `set(true)` is the only op)  
   - the levels in super mario
 
 -
@@ -165,7 +102,7 @@ join-semilattice
 
   "least upper bound"
   
-  LUB( x, y ) =
+  join( x, y ) =
   - the least element of the semilattice
   - which is >= both x and y
 
@@ -179,15 +116,11 @@ given A,B,C,D, where:
   B < D
   C < D
 
-    B
-   / \
-  A   D
-   \ /
-    C
+  (use whiteboard)
 
-  LUB( A, B ) = B
-  LUB( A, C ) = C
-  LUB( B, C ) = D
+  join( A, B ) = B
+  join( A, C ) = C
+  join( B, C ) = D
 
 -
 
@@ -231,43 +164,17 @@ lets look at some CRDTs
 
 -
 
-idempotence is monotoic
-  two states: 0 < 1
-  LUB( 0, 0 ) = 0
-  LUB( 0, 1 ) = 1
-  LUB( 1, 1 ) = 1
-
-  one op: apply
-  apply( 0 ) = 1
-  apply( 1 ) = 1
-
--
-
 the growset CRDT
+
   a set where state only grows
-  LUB( S1, S2 )       = union( S1, S2 )
-  LUB( [a,b], [c] )   = [a,b,c]
-  LUB( [a,b,c], [c] ) = [a,b,c]
+
+  join( S1, S2 )       = union( S1, S2 )
+  join( [a,b], [c] )   = [a,b,c]
+  join( [a,b,c], [c] ) = [a,b,c]
 
   one op: add
   add( [a,b], c ) = [a,b,c]
   add( [a,b,c], c ) = [a,b,c]
-
--
-
-"reversable" is monotonic
-  three states: 0 < 1 < t
-  LUB( 0, 1 ) = 1
-  LUB( 1, t ) = t
-  LUB( 0, t ) = t
-
-  two ops: apply, rollback
-  apply( 0 )    = 1
-  apply( 1 )    = 1
-  apply( t )    = t
-  rollback( 0 ) = t
-  rollback( 1 ) = t
-  rollback( t ) = t
 
 -
 
@@ -276,9 +183,9 @@ the 2P-set CRDT
   ...but never re-added
   uses two growsets: elements and tombstones
 
-  LUB( S1, S2 ) = [
-    LUB( S1.elements,   S2.elements ),
-    LUB( S1.tombstones, S2.tombstones )
+  join( S1, S2 ) = [
+    join( S1.elements,   S2.elements ),
+    join( S1.tombstones, S2.tombstones )
   ]
 
   two ops: add, remove
@@ -289,17 +196,13 @@ the 2P-set CRDT
 
 -
 
-now we're looking at CRDT meta-data
-
--
-
 the observed-remove set CRDT
   a set where elements can freely add and remove
   each element is tagged with a unique id
 
-  LUB(S1, S2) = [
-    LUB( S1.element-tags,   S2.element-tags ),
-    LUB( S1.tombstone-tags, S2.tombstone-tags )
+  join(S1, S2) = [
+    join( S1.element-tags,   S2.element-tags ),
+    join( S1.tombstone-tags, S2.tombstone-tags )
   ]
 
   two ops: add, remove
@@ -425,29 +328,9 @@ what else is there?
 operation-based CRDTS
 
   rather than ship state, ship the ops
-  requirement: guaranteed causal delivery
-
--
-
-In op-based CRDTs, representations of operations issued at each
-node are reliably broadcast to all replicas. Once all replicas
-receive all issued operations (on all nodes), they eventually
-converge to a single state, if:
-
-  (a) operations are broadcast via a reliable causal broadcast, and
-  (b) 'applying' representations of concurrently issued operations
-      is commutative.
-
--
-
-Op-based CRDTs can often have a simple and compact state since
-they can rely on the exactly-once delivery properties of the
-broadcast service, and thus do not have to explicitly handle
-non-idempotent operations.
-
--
-
-example of exactly-once: append-only logs
+  requirement: 
+   - exactly-once deliver
+   - guaranteed causal delivery
 
 -
 
@@ -482,7 +365,7 @@ an op-based OR set
 
 exactly once guarantees idempotence
 
-but op-based requires "guaranteed causal delivery"
+but op-based also requires "guaranteed causal delivery"
 
 
 what's that about?

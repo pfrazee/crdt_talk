@@ -1,5 +1,5 @@
 var fs = require('fs')
-var NLINES = 20
+var NLINES = 30
 
 var notes = fs.readFileSync('./README.txt', {encoding:'utf-8'})
 notes = notes.split('\n-\n\n')
